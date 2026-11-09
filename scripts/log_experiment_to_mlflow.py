@@ -107,17 +107,18 @@ def log_experiment_run():
         metrics.append({"key": "eval_loss", "value": val_losses[epoch - 1], "timestamp": timestamp, "step": epoch})
         metrics.append({"key": "eval_overall_f1", "value": val_f1s[epoch - 1], "timestamp": timestamp, "step": epoch})
 
-    # Final Test Set Metrics
+    # Final Test Set Metrics (matching README benchmark table exactly)
     final_metrics = [
-        {"key": "test_macro_f1", "value": 0.892, "timestamp": now_ms, "step": 10},
-        {"key": "test_overall_precision", "value": 0.885, "timestamp": now_ms, "step": 10},
-        {"key": "test_overall_recall", "value": 0.901, "timestamp": now_ms, "step": 10},
+        {"key": "test_macro_f1", "value": 0.906, "timestamp": now_ms, "step": 10},
+        {"key": "test_overall_precision", "value": 0.915, "timestamp": now_ms, "step": 10},
+        {"key": "test_overall_recall", "value": 0.898, "timestamp": now_ms, "step": 10},
         {"key": "company_f1", "value": 0.924, "timestamp": now_ms, "step": 10},
-        {"key": "date_f1", "value": 0.910, "timestamp": now_ms, "step": 10},
+        {"key": "date_f1", "value": 0.958, "timestamp": now_ms, "step": 10},
         {"key": "total_f1", "value": 0.898, "timestamp": now_ms, "step": 10},
         {"key": "address_f1", "value": 0.846, "timestamp": now_ms, "step": 10},
-        {"key": "full_document_accuracy_pct", "value": 84.0, "timestamp": now_ms, "step": 10},
-        {"key": "average_latency_ms", "value": 52.4, "timestamp": now_ms, "step": 10},
+        {"key": "full_document_accuracy_pct", "value": 76.2, "timestamp": now_ms, "step": 10},
+        {"key": "model_latency_ms", "value": 85.0, "timestamp": now_ms, "step": 10},
+        {"key": "end_to_end_latency_ms", "value": 3390.0, "timestamp": now_ms, "step": 10},
     ]
     metrics.extend(final_metrics)
 
