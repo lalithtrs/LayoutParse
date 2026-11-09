@@ -237,6 +237,10 @@ class SROIEPrecomputedOCREngine(BaseOCREngine):
             txt_path = img_path.with_suffix(".txt")
             if txt_path.exists():
                 return self.extract_from_file(txt_path)
+            # Sibling box/ directory (e.g. data/test/images/<id>.jpg -> data/test/box/<id>.txt)
+            sibling_box = img_path.parent.parent / "box" / f"{img_path.stem}.txt"
+            if sibling_box.exists():
+                return self.extract_from_file(sibling_box)
             # Check data/samples/box if available
             sample_box = Path("data/samples/box") / f"{img_path.stem}.txt"
             if sample_box.exists():

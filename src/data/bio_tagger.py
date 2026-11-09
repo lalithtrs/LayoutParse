@@ -97,32 +97,80 @@ class BIOTagger:
             if b_tag not in self.label2id or i_tag not in self.label2id:
                 continue
 
-            # Exact token sub-sequence matching
-            matches = find_subsequence(cleaned_tokens, val_tokens)
+            # Locate the best span for this entity:
+            # exact contiguous match -> single-token substring -> fuzzy multi-token run.
+            span = self._find_span(cleaned_tokens, val_tokens, occupied)
+            if span is None:
+                continue
 
-            # Fallback: if no direct multi-token match, try matching individual tokens or substrings
-            if not matches and len(val_tokens) == 1:
-                target_word = val_tokens[0]
-                for idx, c_token in enumerate(cleaned_tokens):
-                    if not occupied[idx] and (target_word == c_token or target_word in c_token):
-                        matches.append((idx, idx + 1))
-                        break
-
-            for start_idx, end_idx in matches:
-                # Check if span is already occupied
-                if any(occupied[idx] for idx in range(start_idx, end_idx)):
-                    continue
-
-                tags[start_idx] = b_tag
-                occupied[start_idx] = True
-                for idx in range(start_idx + 1, end_idx):
-                    tags[idx] = i_tag
-                    occupied[idx] = True
-
-                # Match found for this entity, avoid duplicate tagging for same entity
-                break
+            start_idx, end_idx = span
+            tags[start_idx] = b_tag
+            occupied[start_idx] = True
+            for idx in range(start_idx + 1, end_idx):
+                tags[idx] = i_tag
+                occupied[idx] = True
 
         return tags
+
+    def _find_span(
+        self,
+        cleaned_tokens: List[str],
+        val_tokens: List[str],
+        occupied: List[bool],
+        gap: int = 1,
+    ) -> Optional[Tuple[int, int]]:
+        """Find the [start, end) token span that best matches an entity value.
+
+        Multi-word fields (company, address) rarely appear as a perfectly contiguous
+        OCR sub-sequence — addresses in particular span several lines and carry OCR
+        noise. We therefore fall back from exact matching to a gap-tolerant run of the
+        value's own word tokens, which is what lets company/address get labelled at all.
+        """
+        n = len(cleaned_tokens)
+
+        # 1. Exact contiguous sub-sequence.
+        for start_idx, end_idx in find_subsequence(cleaned_tokens, val_tokens):
+            if not any(occupied[i] for i in range(start_idx, end_idx)):
+                return (start_idx, end_idx)
+
+        # 2. Single-token value: first free token that contains / equals it.
+        if len(val_tokens) == 1:
+            target = val_tokens[0]
+            if len(target) < 2:
+                return None
+            for idx, c_token in enumerate(cleaned_tokens):
+                if not occupied[idx] and c_token and (target == c_token or target in c_token or c_token in target):
+                    return (idx, idx + 1)
+            return None
+
+        # 3. Fuzzy multi-token: longest gap-tolerant run of the value's word tokens.
+        val_set = set(val_tokens)
+        matched = [i for i in range(n) if not occupied[i] and cleaned_tokens[i] in val_set]
+        if not matched:
+            return None
+
+        runs: List[List[int]] = []
+        current = [matched[0]]
+        for i in matched[1:]:
+            if i - current[-1] - 1 <= gap:
+                current.append(i)
+            else:
+                runs.append(current)
+                current = [i]
+        runs.append(current)
+
+        def coverage(run: List[int]) -> int:
+            return len({cleaned_tokens[i] for i in run} & val_set)
+
+        best = max(runs, key=coverage)
+        # Require at least half of the value's distinct tokens to be present.
+        if coverage(best) < max(2, (len(val_set) + 1) // 2):
+            return None
+
+        start_idx, end_idx = best[0], best[-1] + 1
+        if any(occupied[i] for i in range(start_idx, end_idx)):
+            return None
+        return (start_idx, end_idx)
 
     def tags_to_ids(self, tags: Sequence[str]) -> List[int]:
         """Convert list of BIO string labels to integer IDs."""

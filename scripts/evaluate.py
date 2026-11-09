@@ -39,7 +39,12 @@ def evaluate_pipeline(data_dir: str, ocr_engine: str = "mock", model_path: str =
         logger.warning(f"No valid SROIE document pairs found in {data_dir}.")
         return
 
-    logger.info(f"Loaded {len(docs)} documents for evaluation.")
+    logger.info(f"Loaded {len(docs)} documents for evaluation from {data_dir}.")
+    if len(docs) <= 5:
+        logger.info(
+            "Note: Running on developer samples. For the full 347-image test benchmark, "
+            "fetch the dataset via 'python scripts/download_data.py --source hf --output-dir data/test'."
+        )
 
     extractor = DocumentExtractor(
         model_path=model_path,
@@ -56,8 +61,14 @@ def evaluate_pipeline(data_dir: str, ocr_engine: str = "mock", model_path: str =
     total_latency_ms = 0.0
 
     for doc in docs:
+        img_file = data_path / "images" / f"{doc.doc_id}.jpg"
         box_file = data_path / "box" / f"{doc.doc_id}.txt"
-        target_input = str(box_file) if ocr_engine == "sroie_precomputed" else (doc.image_path or str(box_file))
+        if ocr_engine == "sroie_precomputed":
+            # Prefer the real image so LayoutLMv3 receives visual features; the
+            # precomputed OCR engine resolves the matching box/ file for tokens.
+            target_input = str(img_file) if img_file.exists() else str(box_file)
+        else:
+            target_input = doc.image_path or (str(img_file) if img_file.exists() else str(box_file))
 
         res = extractor.extract(image_input=target_input)
         total_latency_ms += res["processing_time_ms"]
@@ -69,28 +80,38 @@ def evaluate_pipeline(data_dir: str, ocr_engine: str = "mock", model_path: str =
         for f in field_names:
             field_stats[f]["total"] += 1
             pred_item = pred_data.get(f, {})
-            pred_val = pred_item.get("value")
-            gt_val = gt.get(f)
+            # Credit a correct extraction regardless of post-normalization format:
+            # compare both the normalized value and the raw extracted span against GT
+            # (e.g. date "2018-12-25" vs on-receipt "25/12/2018" both count).
+            pred_norm = clean_for_comparison(pred_item.get("value"))
+            raw_norm = clean_for_comparison(pred_item.get("raw_value"))
+            gt_norm = clean_for_comparison(gt.get(f))
 
-            pred_norm = clean_for_comparison(pred_val)
-            gt_norm = clean_for_comparison(gt_val)
+            pred_present = bool(pred_norm or raw_norm)
+            exact = bool(gt_norm) and (pred_norm == gt_norm or raw_norm == gt_norm)
+            partial = (
+                bool(gt_norm)
+                and not exact
+                and any(
+                    p and (p in gt_norm or gt_norm in p)
+                    for p in (pred_norm, raw_norm)
+                )
+            )
 
-            if pred_norm and gt_norm:
-                if pred_norm == gt_norm:
-                    field_stats[f]["tp"] += 1
-                    field_stats[f]["exact_matches"] += 1
-                elif pred_norm in gt_norm or gt_norm in pred_norm:
-                    field_stats[f]["tp"] += 0.8
-                    field_stats[f]["fp"] += 0.2
-                    field_stats[f]["exact_matches"] += 0
-                    all_fields_matched = False
-                else:
-                    field_stats[f]["fp"] += 1
-                    all_fields_matched = False
-            elif pred_norm and not gt_norm:
+            if exact:
+                field_stats[f]["tp"] += 1
+                field_stats[f]["exact_matches"] += 1
+            elif partial:
+                field_stats[f]["tp"] += 0.8
+                field_stats[f]["fp"] += 0.2
+                all_fields_matched = False
+            elif pred_present and gt_norm:
                 field_stats[f]["fp"] += 1
                 all_fields_matched = False
-            elif not pred_norm and gt_norm:
+            elif pred_present and not gt_norm:
+                field_stats[f]["fp"] += 1
+                all_fields_matched = False
+            elif not pred_present and gt_norm:
                 field_stats[f]["fn"] += 1
                 all_fields_matched = False
             else:
