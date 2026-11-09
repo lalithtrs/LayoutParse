@@ -30,8 +30,10 @@ jobs:
           ruff check .
 
       - name: Run Test Suite
+        env:
+          PYTHONPATH: .
         run: |
-          python -m unittest discover -s tests
+          pytest tests/
 
   docker-build:
     name: Build Docker Container
@@ -42,15 +44,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: docker/Dockerfile
-          push: false
-          tags: docuextract:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Build Docker Image
+        run: |
+          docker build -t docuextract:test -f docker/Dockerfile .
