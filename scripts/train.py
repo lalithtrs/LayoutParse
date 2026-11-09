@@ -103,7 +103,15 @@ def main():
     encoded = ds.map(prepare, batched=True, batch_size=2, remove_columns=ds["train"].column_names)
     encoded.set_format("torch")
 
-    targs = TrainingArguments(
+    # transformers renamed evaluation_strategy -> eval_strategy; support both.
+    import inspect
+
+    eval_key = (
+        "eval_strategy"
+        if "eval_strategy" in inspect.signature(TrainingArguments.__init__).parameters
+        else "evaluation_strategy"
+    )
+    ta_kwargs = dict(
         output_dir="checkpoints/layoutlmv3_sroie",
         learning_rate=float(t["learning_rate"]),
         per_device_train_batch_size=t["per_device_train_batch_size"],
@@ -113,7 +121,6 @@ def main():
         weight_decay=t.get("weight_decay", 0.01),
         warmup_ratio=t.get("warmup_ratio", 0.1),
         fp16=bool(t.get("fp16", True)) and torch.cuda.is_available(),
-        eval_strategy=t.get("eval_strategy", "epoch"),
         save_strategy=t.get("save_strategy", "epoch"),
         save_total_limit=t.get("save_total_limit", 1),
         load_best_model_at_end=t.get("load_best_model_at_end", True),
@@ -122,6 +129,8 @@ def main():
         logging_steps=t.get("logging_steps", 25),
         report_to=[],
     )
+    ta_kwargs[eval_key] = t.get("eval_strategy", "epoch")
+    targs = TrainingArguments(**ta_kwargs)
 
     trainer_kwargs = dict(
         model=model,
