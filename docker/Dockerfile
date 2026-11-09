@@ -1,9 +1,9 @@
-# Multi-stage Dockerfile for Document AI Invoice/Receipt KIE Service
-FROM python:3.10-slim as builder
+# Optimized Dockerfile for Document AI Invoice/Receipt KIE Service (CPU Production)
+FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install system build dependencies
+# Install system runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libgomp1 \
@@ -12,29 +12,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency specifications
 COPY requirements.txt .
 
-# Install dependencies into wheels or isolated prefix
+# 1. Install lightweight CPU-only PyTorch (saves ~7GB of unnecessary NVIDIA CUDA bloat)
+# 2. Install remaining application dependencies
+# 3. Clean up build-essential and pip cache to keep image small
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
-
-# Final runtime image
-FROM python:3.10-slim as runtime
-
-WORKDIR /app
-
-# Install essential runtime libraries (OpenCV, GLib, OpenMP)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1 \
-    libglib2.0-0 \
-    libgomp1 \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy python packages from builder
-COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+    pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir -r requirements.txt && \
+    apt-get purge -y --auto-remove build-essential && \
+    rm -rf /root/.cache/pip
 
 # Create unprivileged application user
 RUN groupadd -g 1001 appuser && \
@@ -42,7 +29,7 @@ RUN groupadd -g 1001 appuser && \
     mkdir -p /app/models /app/logs && \
     chown -R appuser:appuser /app
 
-# Copy application code
+# Copy application code and configurations
 COPY --chown=appuser:appuser src/ /app/src/
 COPY --chown=appuser:appuser configs/ /app/configs/
 COPY --chown=appuser:appuser pyproject.toml /app/

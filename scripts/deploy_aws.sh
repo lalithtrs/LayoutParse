@@ -8,7 +8,14 @@ echo "=========================================================="
 echo " Starting DocuExtract AWS EC2 Automated Deployment"
 echo "=========================================================="
 
-echo "[1/4] Installing system dependencies and Docker..."
+echo "[1/4] Optimizing disk space & installing Docker..."
+# Ensure full 25GB EBS volume is expanded
+sudo growpart /dev/nvme0n1 1 2>/dev/null || sudo growpart /dev/xvda 1 2>/dev/null || true
+sudo resize2fs /dev/nvme0n1p1 2>/dev/null || sudo resize2fs /dev/xvda1 2>/dev/null || true
+
+# Clean up failed docker build caches if any
+sudo docker system prune -af --volumes 2>/dev/null || true
+
 sudo apt-get update -y
 sudo apt-get install -y docker.io docker-compose-v2 git curl || sudo apt-get install -y docker.io docker-compose git curl
 sudo systemctl enable --now docker
@@ -22,7 +29,7 @@ if [ -f "$HOME/model.safetensors" ]; then
     mv "$HOME/model.safetensors" models/best_layoutlmv3_sroie/
 fi
 
-echo "[3/4] Building and launching Docker containers..."
+echo "[3/4] Building and launching lightweight CPU Docker containers..."
 if docker compose version >/dev/null 2>&1; then
     sudo docker compose up -d --build
 elif command -v docker-compose >/dev/null 2>&1; then
