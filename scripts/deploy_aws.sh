@@ -10,7 +10,7 @@ echo "=========================================================="
 
 echo "[1/4] Installing system dependencies and Docker..."
 sudo apt-get update -y
-sudo apt-get install -y docker.io docker-compose git curl
+sudo apt-get install -y docker.io docker-compose-v2 git curl || sudo apt-get install -y docker.io docker-compose git curl
 sudo systemctl enable --now docker
 sudo usermod -aG docker "$USER" || true
 
@@ -23,16 +23,23 @@ if [ -f "$HOME/model.safetensors" ]; then
 fi
 
 echo "[3/4] Building and launching Docker containers..."
-sudo docker-compose up -d --build
+if docker compose version >/dev/null 2>&1; then
+    sudo docker compose up -d --build
+elif command -v docker-compose >/dev/null 2>&1; then
+    sudo docker-compose up -d --build
+else
+    sudo apt-get install -y docker-compose-v2 || sudo apt-get install -y docker-compose
+    sudo docker compose up -d --build
+fi
 
 echo "[4/4] Verifying service health..."
-sleep 8
-for i in {1..5}; do
+sleep 10
+for i in {1..8}; do
     if curl -s http://localhost:8000/health | grep -q "healthy"; then
         echo "Service is healthy and responding!"
         break
     else
-        echo "Waiting for container initialization ($i/5)..."
+        echo "Waiting for container initialization ($i/8)..."
         sleep 5
     fi
 done
