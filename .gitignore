@@ -71,3 +71,6 @@ data/test/*
 # OS
 .DS_Store
 Thumbs.db
+
+# Generated evaluation artifact (produced by scripts/evaluate.py)
+evaluation_report.json
