@@ -1,6 +1,6 @@
 # Core Deep Learning & NLP
 torch>=2.0.0
-torchvision>=2.0.0
+torchvision>=0.15.0
 transformers>=4.41.0
 datasets>=2.14.0
 evaluate>=0.4.0

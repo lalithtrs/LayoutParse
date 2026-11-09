@@ -1,6 +1,7 @@
 name: Continuous Deployment (AWS)
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main ]
     tags:
@@ -10,7 +11,8 @@ jobs:
   deploy:
     name: Build, Push to ECR & Deploy
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    # Only run deployment if AWS secrets are actually configured
+    if: ${{ secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' }}
 
     steps:
       - name: Checkout code
