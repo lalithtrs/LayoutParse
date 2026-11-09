@@ -1,0 +1,29 @@
+# Core Deep Learning & NLP
+torch>=2.0.0
+torchvision>=2.0.0
+transformers>=4.38.0
+datasets>=2.14.0
+evaluate>=0.4.0
+seqeval>=1.2.2
+
+# OCR Engines
+paddlepaddle>=2.5.0
+paddleocr>=2.7.0
+
+# Computer Vision & Data Handling
+pillow>=9.5.0
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+pandas>=2.0.0
+pyyaml>=6.0
+python-dateutil>=2.8.2
+
+# Serving & API
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+pydantic>=2.0.0
+python-multipart>=0.0.6
+requests>=2.31.0
+
+# Experiment Tracking & MLOps
+mlflow>=2.10.0

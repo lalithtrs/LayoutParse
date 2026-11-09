@@ -1,0 +1,23 @@
+ocr:
+  engine: "paddle"  # "paddle" or "mock" or "sroie_precomputed"
+  paddle:
+    use_angle_cls: true
+    lang: "en"
+    show_log: false
+    det: true
+    rec: true
+
+inference:
+  device: "auto"  # "cuda", "cpu", or "auto"
+  model_checkpoint_path: "models/best_layoutlmv3_sroie"
+  confidence_threshold: 0.50
+  low_confidence_drift_threshold: 0.65
+
+normalization:
+  normalize_dates: true
+  target_date_format: "%Y-%m-%d"
+  normalize_totals: true
+
+fallback:
+  enable_llm_fallback: false
+  llm_provider: "none"

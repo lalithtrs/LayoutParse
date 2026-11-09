@@ -1,0 +1,36 @@
+project:
+  name: "DocuExtract"
+  version: "0.1.0"
+  description: "Document AI Invoice/Receipt OCR & Key Information Extraction"
+  seed: 42
+
+labels:
+  entities:
+    - "COMPANY"
+    - "DATE"
+    - "ADDRESS"
+    - "TOTAL"
+  classes:
+    - "O"
+    - "B-COMPANY"
+    - "I-COMPANY"
+    - "B-DATE"
+    - "I-DATE"
+    - "B-ADDRESS"
+    - "I-ADDRESS"
+    - "B-TOTAL"
+    - "I-TOTAL"
+
+paths:
+  raw_data_dir: "data/raw"
+  processed_data_dir: "data/processed"
+  samples_dir: "data/samples"
+  checkpoints_dir: "checkpoints"
+  models_dir: "models"
+  logs_dir: "logs"
+
+dataset:
+  hf_dataset_name: "jsdnrs/ICDAR2019-SROIE"
+  val_split_ratio: 0.10
+  max_seq_length: 512
+  box_scale: 1000
