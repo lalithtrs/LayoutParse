@@ -1,17 +1,32 @@
-"""Script to acquire and structure the SROIE ICDAR 2019 Dataset.
+"""Acquire and structure the SROIE ICDAR 2019 dataset into the repo's
+box / key / images layout (word-level OCR boxes + key fields + receipt image).
 
 Usage:
-    python scripts/download_data.py [--source hf|mock] [--output-dir data/raw]
+    # Full real test benchmark (347 receipts) from Hugging Face:
+    python scripts/download_data.py --source hf --split test --output-dir data/test
+
+    # A few developer samples committed to the repo:
+    python scripts/download_data.py --source hf --split test --limit 5 --output-dir data/samples
+
+    # Offline synthetic placeholders (no network, no real receipts):
+    python scripts/download_data.py --source mock --output-dir data/samples
+
+Output layout (consumed by src.data.dataset.SROIEDatasetLoader):
+    <output-dir>/images/<id>.jpg   receipt image
+    <output-dir>/box/<id>.txt      SROIE 8-point quad + text, one word per line
+    <output-dir>/key/<id>.json     {company, date, address, total}
 """
 
 import argparse
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+FIELDS = ("company", "date", "address", "total")
 
 SAMPLE_RECEIPTS = [
     {
@@ -24,107 +39,82 @@ SAMPLE_RECEIPTS = [
             ([50, 40, 200, 60], "BOOK XPRESS SDN BHD"),
             ([50, 70, 300, 90], "NO 12 JALAN SULTAN 50000 KUALA LUMPUR"),
             ([50, 110, 150, 125], "DATE: 25/12/2018"),
-            ([50, 140, 180, 155], "ITEM 1: BOOK 1"),
-            ([220, 140, 280, 155], "25.00"),
-            ([50, 170, 180, 185], "ITEM 2: PEN SET"),
-            ([220, 170, 280, 185], "20.50"),
             ([50, 210, 120, 230], "TOTAL:"),
             ([220, 210, 280, 230], "RM 45.50"),
-            ([50, 260, 250, 280], "THANK YOU PLEASE COME AGAIN"),
-        ],
-    },
-    {
-        "id": "sample_002",
-        "company": "SUNSHINE GROCERY MART",
-        "date": "14/01/2019",
-        "address": "LOT 45 TAMAN MELAWATI SELANGOR",
-        "total": "128.90",
-        "lines": [
-            ([40, 30, 250, 55], "SUNSHINE GROCERY MART"),
-            ([40, 65, 320, 85], "LOT 45 TAMAN MELAWATI SELANGOR"),
-            ([40, 100, 140, 115], "TAX INVOICE"),
-            ([40, 130, 160, 145], "14/01/2019 14:32"),
-            ([40, 170, 120, 185], "FRESH MILK"),
-            ([240, 170, 290, 185], "12.50"),
-            ([40, 200, 130, 215], "ORGANIC EGGS"),
-            ([240, 200, 290, 215], "8.40"),
-            ([40, 230, 160, 245], "OLIVE OIL 1L"),
-            ([240, 230, 290, 245], "108.00"),
-            ([40, 280, 150, 305], "SUBTOTAL: 128.90"),
-            ([40, 320, 120, 345], "TOTAL:"),
-            ([230, 320, 290, 345], "128.90"),
         ],
     },
 ]
 
 
-def generate_sample_dataset(output_dir: Path):
-    """Generate sample SROIE format files for development and tests."""
-    images_dir = output_dir / "images"
-    box_dir = output_dir / "box"
-    key_dir = output_dir / "key"
+def _write_box_file(box_file: Path, lines: List) -> None:
+    """lines: list of (bbox[x0,y0,x1,y1], text). Emits one SROIE quad line per word."""
+    out: List[str] = []
+    for bbox, text in lines:
+        text = str(text).replace("\n", " ").strip()
+        if not text:
+            continue
+        x0, y0, x1, y1 = [int(round(c)) for c in bbox]
+        out.append(f"{x0},{y0},{x1},{y0},{x1},{y1},{x0},{y1},{text}")
+    box_file.write_text("\n".join(out), encoding="utf-8")
 
-    images_dir.mkdir(parents=True, exist_ok=True)
-    box_dir.mkdir(parents=True, exist_ok=True)
-    key_dir.mkdir(parents=True, exist_ok=True)
 
+def _write_doc(root: Path, doc_id: str, lines: List, gt: Dict[str, str], image=None) -> None:
+    (root / "box").mkdir(parents=True, exist_ok=True)
+    (root / "key").mkdir(parents=True, exist_ok=True)
+    _write_box_file(root / "box" / f"{doc_id}.txt", lines)
+    clean_gt = {k: (gt.get(k) or "") for k in FIELDS}
+    (root / "key" / f"{doc_id}.json").write_text(json.dumps(clean_gt, indent=2), encoding="utf-8")
+    if image is not None:
+        (root / "images").mkdir(parents=True, exist_ok=True)
+        image.convert("RGB").save(root / "images" / f"{doc_id}.jpg", format="JPEG", quality=92)
+
+
+def generate_sample_dataset(output_dir: Path) -> None:
+    """Synthetic placeholders for offline development / unit tests (not real receipts)."""
     for item in SAMPLE_RECEIPTS:
-        item_id = item["id"]
-
-        # 1. Write SROIE OCR text annotation: x1,y1,x2,y2,x3,y3,x4,y4,text
-        box_file = box_dir / f"{item_id}.txt"
-        with open(box_file, "w", encoding="utf-8") as f:
-            for bbox, text in item["lines"]:
-                x0, y0, x1, y1 = bbox
-                # 4-point polygon: top-left, top-right, bottom-right, bottom-left
-                line_str = f"{x0},{y0},{x1},{y0},{x1},{y1},{x0},{y1},{text}\n"
-                f.write(line_str)
-
-        # 2. Write SROIE Key fields JSON
-        key_file = key_dir / f"{item_id}.json"
-        ground_truth = {
-            "company": item["company"],
-            "date": item["date"],
-            "address": item["address"],
-            "total": item["total"],
-        }
-        with open(key_file, "w", encoding="utf-8") as f:
-            json.dump(ground_truth, f, indent=2)
-
-    logger.info(f"Sample dataset generated successfully in {output_dir}")
+        _write_doc(output_dir, item["id"], item["lines"], {k: item[k] for k in FIELDS})
+    logger.info(f"Synthetic sample dataset generated in {output_dir}")
 
 
-def download_hf_dataset(hf_name: str, output_dir: Path):
-    """Download SROIE from Hugging Face datasets hub."""
+def download_hf_dataset(hf_name: str, output_dir: Path, split: str, limit: Optional[int]) -> None:
+    """Download real SROIE from Hugging Face and convert to box/key/images layout."""
     try:
         from datasets import load_dataset
     except ImportError:
-        logger.warning("Hugging Face 'datasets' not installed. Falling back to sample generation.")
+        logger.warning("Hugging Face 'datasets' not installed. Falling back to synthetic samples.")
         generate_sample_dataset(output_dir)
         return
 
-    logger.info(f"Downloading dataset '{hf_name}' from Hugging Face...")
-    try:
-        dataset = load_dataset(hf_name)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        dataset.save_to_disk(str(output_dir / "sroie_hf"))
-        logger.info(f"Dataset successfully saved to {output_dir / 'sroie_hf'}")
-    except Exception as e:
-        logger.error(f"Failed to download from Hugging Face: {e}")
-        logger.info("Falling back to local sample generation.")
-        generate_sample_dataset(output_dir)
+    logger.info(f"Downloading '{hf_name}' split='{split}' from Hugging Face...")
+    ds = load_dataset(hf_name, split=split)
+    n = 0
+    for i, row in enumerate(ds):
+        if limit is not None and n >= limit:
+            break
+        doc_id = str(row.get("key") or f"doc_{i:04d}").strip() or f"doc_{i:04d}"
+        words = row.get("words") or []
+        bboxes = row.get("bboxes") or []
+        entities = row.get("entities") or {}
+        if not words or not bboxes:
+            continue
+        lines = list(zip(bboxes, words))
+        _write_doc(output_dir, doc_id, lines, entities, image=row.get("image"))
+        n += 1
+    logger.info(f"Converted {n} real receipts into {output_dir} (images/, box/, key/).")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Download / Prepare SROIE Dataset")
-    parser.add_argument("--source", choices=["hf", "mock"], default="mock", help="Download source")
-    parser.add_argument("--hf-name", default="jsdnrs/ICDAR2019-SROIE", help="HF Dataset repository")
-    parser.add_argument("--output-dir", default="data/raw", help="Target output directory")
+    parser = argparse.ArgumentParser(description="Download / prepare the SROIE dataset")
+    parser.add_argument("--source", choices=["hf", "mock"], default="hf")
+    parser.add_argument("--hf-name", default="jsdnrs/ICDAR2019-SROIE")
+    parser.add_argument("--split", default="test", choices=["train", "test"])
+    parser.add_argument("--limit", type=int, default=None, help="Max documents to convert")
+    parser.add_argument("--output-dir", default="data/test")
     args = parser.parse_args()
 
     out_path = Path(args.output_dir)
     if args.source == "hf":
-        download_hf_dataset(args.hf_name, out_path)
+        download_hf_dataset(args.hf_name, out_path, args.split, args.limit)
     else:
         generate_sample_dataset(out_path)
 
