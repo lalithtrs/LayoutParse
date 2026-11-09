@@ -71,11 +71,14 @@ class PaddleOCREngine(BaseOCREngine):
             try:
                 from paddleocr import PaddleOCR
 
-                self._ocr = PaddleOCR(
-                    use_angle_cls=self.use_angle_cls,
-                    lang=self.lang,
-                    show_log=self.show_log,
-                )
+                try:
+                    self._ocr = PaddleOCR(
+                        use_angle_cls=self.use_angle_cls,
+                        lang=self.lang,
+                    )
+                except Exception as ex:
+                    logger.warning(f"PaddleOCR standard init failed ({ex}), trying basic initialization...")
+                    self._ocr = PaddleOCR(lang=self.lang)
             except ImportError as err:
                 raise ImportError(
                     "paddleocr is not installed. Run 'pip install paddleocr paddlepaddle' "

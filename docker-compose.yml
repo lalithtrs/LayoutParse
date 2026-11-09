@@ -11,6 +11,8 @@ services:
       - LOG_LEVEL=INFO
       - OCR_ENGINE=paddle
     volumes:
+      - ./src:/app/src:ro
+      - ./configs:/app/configs:ro
       - ./models:/app/models:ro
       - ./logs:/app/logs:rw
     restart: unless-stopped
