@@ -29,6 +29,14 @@ if [ -f "$HOME/model.safetensors" ]; then
     mv "$HOME/model.safetensors" models/best_layoutlmv3_sroie/
 fi
 
+# Ensure all config and tokenizer files exist
+git checkout -- models/best_layoutlmv3_sroie/config.json models/best_layoutlmv3_sroie/processor_config.json models/best_layoutlmv3_sroie/tokenizer.json models/best_layoutlmv3_sroie/tokenizer_config.json 2>/dev/null || true
+
+# Fix permissions so unprivileged Docker container user (UID 1001) can read model weights and write logs
+chmod -R a+rX models/
+chmod -R a+rwx logs/
+ls -la models/best_layoutlmv3_sroie/
+
 echo "[3/4] Building and launching lightweight CPU Docker containers..."
 if docker compose version >/dev/null 2>&1; then
     sudo docker compose up -d --build

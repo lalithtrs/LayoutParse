@@ -26,10 +26,16 @@ pythonpath = [
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+exclude = [
+    "notebooks",
+    "checkpoints",
+    "models",
+    "data",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "W"]
-ignore = ["E501", "E402", "F401", "F841"]
+ignore = ["E501", "E402", "F401", "F841", "E741"]
 
 [tool.black]
 line-length = 100

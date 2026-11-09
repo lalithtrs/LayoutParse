@@ -23,11 +23,17 @@ RUN pip install --no-cache-dir --upgrade pip && \
     apt-get purge -y --auto-remove build-essential && \
     rm -rf /root/.cache/pip
 
-# Create unprivileged application user
+# Create unprivileged application user with home directory & writable cache paths
 RUN groupadd -g 1001 appuser && \
-    useradd -r -u 1001 -g appuser appuser && \
-    mkdir -p /app/models /app/logs && \
-    chown -R appuser:appuser /app
+    useradd -m -u 1001 -g appuser appuser && \
+    mkdir -p /app/models /app/logs /home/appuser/.paddleocr /home/appuser/.cache/huggingface /home/appuser/.cache/torch && \
+    chown -R appuser:appuser /app /home/appuser && \
+    chmod -R 777 /home/appuser
+
+ENV HOME=/home/appuser \
+    PADDLE_OCR_BASE_DIR=/home/appuser/.paddleocr \
+    HF_HOME=/home/appuser/.cache/huggingface \
+    TORCH_HOME=/home/appuser/.cache/torch
 
 # Copy application code and configurations
 COPY --chown=appuser:appuser src/ /app/src/

@@ -56,7 +56,15 @@ class DocumentExtractor:
             from transformers import AutoProcessor, LayoutLMv3ForTokenClassification
 
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
-            self.processor = AutoProcessor.from_pretrained(self.model_path, apply_ocr=False)
+            try:
+                self.processor = AutoProcessor.from_pretrained(self.model_path, apply_ocr=False)
+            except Exception as pe:
+                logger.warning(
+                    f"Could not load local processor from {self.model_path} ({pe}), "
+                    "falling back to 'microsoft/layoutlmv3-base' processor"
+                )
+                self.processor = AutoProcessor.from_pretrained("microsoft/layoutlmv3-base", apply_ocr=False)
+
             self.model = LayoutLMv3ForTokenClassification.from_pretrained(self.model_path)
             self.model.to(self.device)
             self.model.eval()
