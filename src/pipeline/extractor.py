@@ -105,6 +105,25 @@ class DocumentExtractor:
         """Execute end-to-end extraction from input image."""
         start_time = time.perf_counter()
 
+        pil_image = None
+        if isinstance(image_input, (str, Path)) and Path(image_input).exists():
+            try:
+                from PIL import Image
+
+                pil_image = Image.open(image_input).convert("RGB")
+                width, height = pil_image.size
+            except Exception:
+                pass
+        elif hasattr(image_input, "seek"):
+            try:
+                from PIL import Image
+
+                pil_image = Image.open(image_input).convert("RGB")
+                width, height = pil_image.size
+                image_input.seek(0)
+            except Exception:
+                pass
+
         # Step 1: Run OCR
         token_boxes = self.ocr_engine.extract_tokens(image_input)
         if not token_boxes:
@@ -130,15 +149,18 @@ class DocumentExtractor:
         if self.model is not None and self.processor is not None:
             import torch
 
-            # Prepare encoding for LayoutLMv3
-            encoding = self.processor(
-                text=words,
-                boxes=norm_boxes,
-                return_tensors="pt",
-                truncation=True,
-                padding="max_length",
-                max_length=512,
-            )
+            proc_kwargs = {
+                "text": words,
+                "boxes": norm_boxes,
+                "return_tensors": "pt",
+                "truncation": True,
+                "padding": "max_length",
+                "max_length": 512,
+            }
+            if pil_image is not None:
+                proc_kwargs["images"] = pil_image
+
+            encoding = self.processor(**proc_kwargs)
             for k, v in encoding.items():
                 encoding[k] = v.to(self.device)
 
@@ -149,9 +171,22 @@ class DocumentExtractor:
                 predicted_ids = torch.argmax(probabilities, dim=-1).squeeze().tolist()
                 max_probs = torch.max(probabilities, dim=-1).values.squeeze().tolist()
 
-            # Align back to words (first len(words) tokens excluding special tokens)
-            pred_tags = [ID2LABEL.get(pid, "O") for pid in predicted_ids[1 : 1 + len(words)]]
-            conf_scores = max_probs[1 : 1 + len(words)]
+            # Align sub-tokens to original words using word_ids
+            try:
+                word_ids = encoding.word_ids(batch_index=0)
+                word_preds = {}
+                word_confs = {}
+                for idx, w_id in enumerate(word_ids):
+                    if w_id is not None and w_id not in word_preds:
+                        lbl_map = getattr(self.model.config, "id2label", ID2LABEL)
+                        word_preds[w_id] = lbl_map.get(predicted_ids[idx], "O")
+                        word_confs[w_id] = float(max_probs[idx])
+                pred_tags = [word_preds.get(i, "O") for i in range(len(words))]
+                conf_scores = [word_confs.get(i, 0.5) for i in range(len(words))]
+            except Exception:
+                lbl_map = getattr(self.model.config, "id2label", ID2LABEL)
+                pred_tags = [lbl_map.get(pid, "O") for pid in predicted_ids[1 : 1 + len(words)]]
+                conf_scores = [float(p) for p in max_probs[1 : 1 + len(words)]]
         else:
             pred_tags, conf_scores = self._heuristic_tagging(token_boxes)
 
