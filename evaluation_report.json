@@ -1,6 +1,6 @@
 {
   "dataset_size": 2,
-  "avg_latency_ms": 2.75,
+  "avg_latency_ms": 51.36,
   "fields": {
     "company": {
       "precision": 0.8,
