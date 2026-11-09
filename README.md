@@ -14,6 +14,15 @@ An end-to-end multimodal Document AI system for scanned invoice and receipt proc
 
 ---
 
+## 🎥 Live Interactive Demonstration
+
+https://github.com/lalithtrs/LayoutParse/raw/main/docs/demo.webm
+
+> 📹 **Live Walkthrough Video:** [**Click here to watch the full recording (`docs/demo.webm`)**](docs/demo.webm)  
+> Demonstrates real-time receipt inference on the AWS EC2 production deployment: uploading an invoice image, executing the combined OCR & LayoutLMv3 pipeline, and extracting structured key information with per-field confidence scores in under 5 seconds.
+
+---
+
 ## 1. System Architecture
 
 ```text
