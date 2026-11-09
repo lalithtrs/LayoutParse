@@ -35,9 +35,20 @@ def setup_weights(source_path: str):
         elif download_candidate.exists():
             source = download_candidate
         else:
+            # Fallback to automated Hugging Face download
+            try:
+                from huggingface_hub import snapshot_download
+
+                logger.info("Local zip not found. Downloading model weights from Hugging Face Hub (lalithtrs/layoutlmv3-sroie)...")
+                snapshot_download(repo_id="lalithtrs/layoutlmv3-sroie", local_dir=str(TARGET_DIR))
+                logger.info(f"Successfully downloaded model weights into {TARGET_DIR}")
+                return
+            except Exception as hf_err:
+                logger.warning(f"Hugging Face Hub download fallback: {hf_err}")
+
             logger.error(
                 f"Source weights file '{source_path}' not found.\n"
-                f"Please provide the path to your downloaded Colab zip, e.g.:\n"
+                f"Please provide the path to your downloaded weights or Colab zip, e.g.:\n"
                 f"  python scripts/setup_weights.py ~/Downloads/best_layoutlmv3_sroie.zip"
             )
             sys.exit(1)

@@ -43,8 +43,14 @@ class DocumentExtractor:
             return MockOCREngine()
 
     def _load_model_if_available(self):
-        """Load LayoutLMv3 weights if present on disk."""
-        if not self.model_path or not os.path.exists(self.model_path):
+        """Load LayoutLMv3 weights if present on disk or Hugging Face Hub."""
+        if not self.model_path:
+            return
+
+        is_local = os.path.exists(self.model_path)
+        is_hf_hub = "/" in self.model_path and not is_local
+
+        if not is_local and not is_hf_hub:
             logger.info(
                 f"Model weights not found at '{self.model_path}'. "
                 "Pipeline running in fallback/heuristic mode until weights are placed."
