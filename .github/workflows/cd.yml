@@ -3,7 +3,6 @@ name: Continuous Deployment (AWS)
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
     tags:
       - 'v*.*.*'
 
@@ -11,12 +10,18 @@ jobs:
   deploy:
     name: Build, Push to ECR & Deploy
     runs-on: ubuntu-latest
-    # Only run deployment if AWS secrets are actually configured
-    if: ${{ secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Verify Secrets Configuration
+        run: |
+          if [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ] || [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then
+            echo "::error::AWS credentials (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) not found in GitHub Secrets."
+            echo "To enable CD: Configure AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and SERVER_SSH_KEY in Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
