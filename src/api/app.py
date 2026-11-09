@@ -62,7 +62,7 @@ def get_telemetry():
 @app.post("/extract", response_model=ExtractionResponse)
 async def extract_invoice(
     file: UploadFile = File(...),
-    ocr_engine: str = Query("mock", regex="^(mock|paddle|sroie_precomputed)$"),
+    ocr_engine: str = Query("mock", pattern="^(mock|paddle|sroie_precomputed)$"),
 ):
     """Extract structured key information fields from an uploaded invoice image."""
     start_time = time.perf_counter()
