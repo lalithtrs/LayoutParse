@@ -1,4 +1,5 @@
 {
+  "_name_or_path": "microsoft/layoutlmv3-base",
   "architectures": [
     "LayoutLMv3ForTokenClassification"
   ],
@@ -6,7 +7,6 @@
   "bos_token_id": 0,
   "classifier_dropout": null,
   "coordinate_size": 128,
-  "dtype": "float32",
   "eos_token_id": 2,
   "has_relative_attention_bias": true,
   "has_spatial_attention_bias": true,
@@ -54,9 +54,9 @@
   "second_input_size": 112,
   "shape_size": 128,
   "text_embed": true,
-  "transformers_version": "5.20.2",
+  "torch_dtype": "float32",
+  "transformers_version": "4.49.0",
   "type_vocab_size": 1,
-  "use_cache": false,
   "visual_embed": true,
   "vocab_size": 50265
 }
