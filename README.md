@@ -83,8 +83,7 @@ degradation on top of the numbers above.
 - **Serving** — FastAPI (`/extract`, `/health`, `/telemetry`) with Pydantic schemas and per-field
   confidence scores.
 - **Containerized** — CPU-only Docker image (`docker/Dockerfile`) to keep the serving footprint small.
-- **CI/CD** — GitHub Actions: Ruff lint + unit tests + Docker build (`.github/workflows/ci.yml`),
-  and build/push to AWS ECR on tags (`.github/workflows/cd.yml`).
+- **CI Pipeline** — GitHub Actions: Ruff lint + 17 unit tests + Docker build validation (`.github/workflows/ci.yml`).
 - **Monitoring** — `/telemetry` exposes request counts, latency, and a low-confidence/drift signal
   (`src/api/monitoring.py`).
 
