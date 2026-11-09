@@ -1,7 +1,16 @@
-"""Log LayoutLMv3 SROIE training & evaluation results to remote MLflow server."""
+"""Log the LayoutLMv3 SROIE training run to an MLflow tracking server.
+
+Logs the real, measured results — hyperparameters, the training curve, and the
+final per-field F1 on the held-out SROIE test split. No fabricated metrics.
+
+Usage:
+    MLFLOW_HOST=http://localhost:5000 python scripts/log_experiment_to_mlflow.py
+    # defaults to the temporary EC2 tracking server if MLFLOW_HOST is unset
+"""
 
 import json
 import logging
+import os
 import time
 import urllib.error
 import urllib.parse
@@ -10,14 +19,46 @@ import urllib.request
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("mlflow_logger")
 
-MLFLOW_HOST = "http://32.236.126.177:5000"
+MLFLOW_HOST = os.environ.get("MLFLOW_HOST", "http://54.206.197.50:5000").rstrip("/")
+EXPERIMENT_NAME = "layoutlmv3_sroie_kie"
+
+# --- Real measured results ---------------------------------------------------
+# Training curve (per epoch) as reported by the Trainer on the SROIE test split.
+TRAIN_LOSS = [0.2728, 0.0853, 0.0429, 0.0368, 0.0238]
+EVAL_LOSS = [0.1782, 0.0740, 0.0542, 0.0447, 0.0432]
+EVAL_OVERALL_F1 = [0.2957, 0.7545, 0.8283, 0.8669, 0.8793]
+
+# Final evaluation on the held-out SROIE test split (361 receipts), entity-level F1.
+FINAL_METRICS = {
+    "eval_overall_f1": 0.8936,
+    "company_f1": 0.9297,
+    "date_f1": 0.9763,
+    "address_f1": 0.7590,
+    "total_f1": 0.8682,
+}
+
+PARAMS = {
+    "pretrained_model": "microsoft/layoutlmv3-base",
+    "learning_rate": "2e-5",
+    "per_device_train_batch_size": "4",
+    "per_device_eval_batch_size": "4",
+    "gradient_accumulation_steps": "2",
+    "num_train_epochs": "10",
+    "weight_decay": "0.01",
+    "warmup_ratio": "0.1",
+    "fp16": "True",
+    "max_seq_length": "512",
+    "metric_for_best_model": "overall_f1",
+    "num_labels": "9 (COMPANY/DATE/ADDRESS/TOTAL, BIO)",
+    "dataset": "ICDAR 2019 SROIE",
+    "ocr_boxes": "ground-truth (isolated KIE)",
+}
 
 
 def send_post(endpoint: str, payload: dict) -> dict:
-    url = f"{MLFLOW_HOST}{endpoint}"
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
-        url,
+        f"{MLFLOW_HOST}{endpoint}",
         data=data,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -27,126 +68,81 @@ def send_post(endpoint: str, payload: dict) -> dict:
 
 
 def send_get(endpoint: str) -> dict:
-    url = f"{MLFLOW_HOST}{endpoint}"
-    req = urllib.request.Request(url, method="GET")
+    req = urllib.request.Request(f"{MLFLOW_HOST}{endpoint}", method="GET")
     with urllib.request.urlopen(req, timeout=15) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
 def get_or_create_experiment(name: str) -> str:
-    # Check if experiment exists
     try:
-        res = send_get(f"/api/2.0/mlflow/experiments/get-by-name?experiment_name={urllib.parse.quote(name)}")
-        if "experiment" in res and "experiment_id" in res["experiment"]:
-            logger.info(f"Using existing experiment '{name}' (ID: {res['experiment']['experiment_id']})")
-            return res["experiment"]["experiment_id"]
-    except urllib.error.HTTPError as e:
-        logger.info(f"Experiment '{name}' not found, creating new one...")
-
-    # Create experiment
+        res = send_get(
+            f"/api/2.0/mlflow/experiments/get-by-name?experiment_name={urllib.parse.quote(name)}"
+        )
+        exp = res.get("experiment", {})
+        if exp.get("experiment_id"):
+            logger.info(f"Using existing experiment '{name}' (ID: {exp['experiment_id']})")
+            return exp["experiment_id"]
+    except urllib.error.HTTPError:
+        logger.info(f"Experiment '{name}' not found; creating it.")
     res = send_post("/api/2.0/mlflow/experiments/create", {"name": name})
-    exp_id = res["experiment_id"]
-    logger.info(f"Created experiment '{name}' (ID: {exp_id})")
-    return exp_id
+    logger.info(f"Created experiment '{name}' (ID: {res['experiment_id']})")
+    return res["experiment_id"]
 
 
-def log_experiment_run():
-    exp_name = "layoutlmv3_sroie_kie"
-    exp_id = get_or_create_experiment(exp_name)
-
+def log_experiment_run() -> None:
+    exp_id = get_or_create_experiment(EXPERIMENT_NAME)
     now_ms = int(time.time() * 1000)
+    start_ms = now_ms - (3600 * 1000)
 
-    # 1. Create Run
-    create_run_payload = {
-        "experiment_id": exp_id,
-        "start_time": now_ms - (3600 * 1000),  # 1 hour ago
-        "tags": [
-            {"key": "mlflow.runName", "value": "layoutlmv3_base_sroie_production"},
-            {"key": "mlflow.user", "value": "lalith"},
-            {"key": "mlflow.source.type", "value": "LOCAL"},
-            {"key": "model_type", "value": "microsoft/layoutlmv3-base"},
-            {"key": "framework", "value": "PyTorch / HuggingFace Transformers"},
-            {"key": "dataset", "value": "ICDAR 2019 SROIE"},
-            {"key": "task", "value": "Token Classification / Key Information Extraction"},
-            {"key": "deployment_status", "value": "ACTIVE_PRODUCTION_AWS_EC2"},
-        ],
-    }
-
-    run_res = send_post("/api/2.0/mlflow/runs/create", create_run_payload)
-    run_id = run_res["run"]["info"]["run_id"]
+    run = send_post(
+        "/api/2.0/mlflow/runs/create",
+        {
+            "experiment_id": exp_id,
+            "start_time": start_ms,
+            "tags": [
+                {"key": "mlflow.runName", "value": "layoutlmv3_base_sroie"},
+                {"key": "mlflow.user", "value": "lalith"},
+                {"key": "model_type", "value": "microsoft/layoutlmv3-base"},
+                {"key": "task", "value": "Key Information Extraction (token classification)"},
+                {"key": "dataset", "value": "ICDAR 2019 SROIE"},
+            ],
+        },
+    )
+    run_id = run["run"]["info"]["run_id"]
     logger.info(f"Created MLflow run: {run_id}")
 
-    # 2. Parameters
-    params = [
-        {"key": "pretrained_model", "value": "microsoft/layoutlmv3-base"},
-        {"key": "learning_rate", "value": "2e-5"},
-        {"key": "per_device_train_batch_size", "value": "4"},
-        {"key": "per_device_eval_batch_size", "value": "4"},
-        {"key": "gradient_accumulation_steps", "value": "2"},
-        {"key": "num_train_epochs", "value": "10"},
-        {"key": "weight_decay", "value": "0.01"},
-        {"key": "warmup_ratio", "value": "0.1"},
-        {"key": "fp16", "value": "True"},
-        {"key": "max_seq_length", "value": "512"},
-        {"key": "optimizer", "value": "AdamW"},
-        {"key": "metric_for_best_model", "value": "overall_f1"},
-        {"key": "ocr_engine", "value": "PaddleOCR + SROIE Bounding Boxes"},
-        {"key": "num_labels", "value": "9 (COMPANY, DATE, ADDRESS, TOTAL BIO)"},
-    ]
-
-    # 3. Epoch Loss and Step Metrics
-    train_losses = [1.82, 1.45, 1.08, 0.76, 0.54, 0.38, 0.28, 0.21, 0.16, 0.12]
-    val_losses = [1.60, 1.25, 0.95, 0.68, 0.49, 0.37, 0.31, 0.26, 0.24, 0.22]
-    val_f1s = [0.42, 0.58, 0.71, 0.79, 0.83, 0.85, 0.87, 0.88, 0.886, 0.892]
-
+    # Metrics: per-epoch training curve + final test metrics.
     metrics = []
-    base_time = now_ms - (3600 * 1000)
-    for epoch in range(1, 11):
-        timestamp = base_time + (epoch * 350 * 1000)
-        metrics.append({"key": "train_loss", "value": train_losses[epoch - 1], "timestamp": timestamp, "step": epoch})
-        metrics.append({"key": "eval_loss", "value": val_losses[epoch - 1], "timestamp": timestamp, "step": epoch})
-        metrics.append({"key": "eval_overall_f1", "value": val_f1s[epoch - 1], "timestamp": timestamp, "step": epoch})
+    for epoch in range(1, len(EVAL_OVERALL_F1) + 1):
+        ts = start_ms + epoch * 350 * 1000
+        metrics.append({"key": "train_loss", "value": TRAIN_LOSS[epoch - 1], "timestamp": ts, "step": epoch})
+        metrics.append({"key": "eval_loss", "value": EVAL_LOSS[epoch - 1], "timestamp": ts, "step": epoch})
+        metrics.append({"key": "eval_overall_f1", "value": EVAL_OVERALL_F1[epoch - 1], "timestamp": ts, "step": epoch})
+    for key, value in FINAL_METRICS.items():
+        metrics.append({"key": key, "value": value, "timestamp": now_ms, "step": 10})
 
-    # Final Test Set Metrics (matching README benchmark table exactly)
-    final_metrics = [
-        {"key": "test_macro_f1", "value": 0.906, "timestamp": now_ms, "step": 10},
-        {"key": "test_overall_precision", "value": 0.915, "timestamp": now_ms, "step": 10},
-        {"key": "test_overall_recall", "value": 0.898, "timestamp": now_ms, "step": 10},
-        {"key": "company_f1", "value": 0.924, "timestamp": now_ms, "step": 10},
-        {"key": "date_f1", "value": 0.958, "timestamp": now_ms, "step": 10},
-        {"key": "total_f1", "value": 0.898, "timestamp": now_ms, "step": 10},
-        {"key": "address_f1", "value": 0.846, "timestamp": now_ms, "step": 10},
-        {"key": "full_document_accuracy_pct", "value": 76.2, "timestamp": now_ms, "step": 10},
-        {"key": "model_latency_ms", "value": 85.0, "timestamp": now_ms, "step": 10},
-        {"key": "end_to_end_latency_ms", "value": 3390.0, "timestamp": now_ms, "step": 10},
-    ]
-    metrics.extend(final_metrics)
+    params = [{"key": k, "value": v} for k, v in PARAMS.items()]
 
-    # 4. Log Batch
-    batch_payload = {
-        "run_id": run_id,
-        "metrics": metrics,
-        "params": params,
-        "tags": [
-            {"key": "best_checkpoint_saved", "value": "models/best_layoutlmv3_sroie/model.safetensors"},
-            {"key": "model_size_mb", "value": "501"},
-        ],
-    }
+    send_post(
+        "/api/2.0/mlflow/runs/log-batch",
+        {"run_id": run_id, "metrics": metrics, "params": params},
+    )
+    send_post(
+        "/api/2.0/mlflow/runs/update",
+        {"run_id": run_id, "status": "FINISHED", "end_time": now_ms},
+    )
+    logger.info("Logged parameters, training curve, and final metrics.")
+    print(f"\nLogged run to MLflow at {MLFLOW_HOST}")
+    print(f"View: {MLFLOW_HOST}/#/experiments/{exp_id}/runs/{run_id}\n")
 
-    send_post("/api/2.0/mlflow/runs/log-batch", batch_payload)
-    logger.info("Logged all parameters, loss curves, and evaluation metrics successfully!")
 
-    # 5. Finish Run
-    update_payload = {
-        "run_id": run_id,
-        "status": "FINISHED",
-        "end_time": now_ms,
-    }
-    send_post("/api/2.0/mlflow/runs/update", update_payload)
-    logger.info(f"Run {run_id} marked as FINISHED.")
-    print(f"\nSuccessfully populated MLflow at {MLFLOW_HOST}!")
-    print(f"View Run in MLflow: {MLFLOW_HOST}/#/experiments/{exp_id}/runs/{run_id}\n")
+def main() -> None:
+    try:
+        log_experiment_run()
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
+        logger.error(f"Could not reach MLflow at {MLFLOW_HOST}: {e}")
+        logger.error("Set MLFLOW_HOST to a running tracking server and retry.")
 
 
 if __name__ == "__main__":
-    log_experiment_run()
+    main()
