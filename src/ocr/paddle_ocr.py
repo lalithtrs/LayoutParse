@@ -88,59 +88,116 @@ class PaddleOCREngine(BaseOCREngine):
 
     def extract_tokens(self, image_input: Union[str, Path, Any]) -> List[TokenBox]:
         ocr = self._get_ocr()
+        import os
+        import tempfile
+        from PIL import Image
 
-        # Prepare image for PaddleOCR: supports file path, PIL Image, BytesIO, or numpy array
-        img_for_ocr = image_input
+        temp_file_path = None
+        img_for_ocr = None
+
         try:
-            from PIL import Image
-            import numpy as np
-
-            if hasattr(image_input, "seek"):
-                image_input.seek(0)
-                pil_img = Image.open(image_input).convert("RGB")
-                img_for_ocr = np.array(pil_img)[:, :, ::-1]  # RGB to BGR
-                image_input.seek(0)
-            elif isinstance(image_input, Image.Image):
-                img_for_ocr = np.array(image_input.convert("RGB"))[:, :, ::-1]
-            elif isinstance(image_input, bytes):
-                import io
-                pil_img = Image.open(io.BytesIO(image_input)).convert("RGB")
-                img_for_ocr = np.array(pil_img)[:, :, ::-1]
-            elif isinstance(image_input, (str, Path)):
+            # 1. Standardize image input into a clean temporary RGB image file
+            if isinstance(image_input, (str, Path)) and os.path.isfile(str(image_input)):
                 img_for_ocr = str(image_input)
-        except Exception as prep_err:
-            logger.warning(f"PaddleOCR input preprocessing fallback: {prep_err}")
-            img_for_ocr = image_input
+            else:
+                # Load PIL image safely handling alpha / transparent backgrounds
+                if hasattr(image_input, "seek"):
+                    image_input.seek(0)
+                    pil_img = Image.open(image_input)
+                elif isinstance(image_input, bytes):
+                    import io
+                    pil_img = Image.open(io.BytesIO(image_input))
+                elif isinstance(image_input, Image.Image):
+                    pil_img = image_input
+                else:
+                    pil_img = Image.open(image_input)
 
-        # PaddleOCR returns: [ [ [ [x,y] * 4 ], (text, confidence) ], ... ]
-        try:
-            raw_results = ocr.ocr(img_for_ocr)
-        except TypeError:
-            raw_results = ocr.ocr(img_for_ocr, cls=self.use_angle_cls)
+                # Ensure RGBA / palette images are flattened onto white background so text isn't lost
+                if pil_img.mode in ("RGBA", "LA", "P"):
+                    bg = Image.new("RGB", pil_img.size, (255, 255, 255))
+                    rgba_img = pil_img.convert("RGBA")
+                    bg.paste(rgba_img, mask=rgba_img.split()[-1] if "A" in rgba_img.mode else None)
+                    pil_img = bg
+                else:
+                    pil_img = pil_img.convert("RGB")
+
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
+                    pil_img.save(tf.name, format="PNG")
+                    temp_file_path = tf.name
+                img_for_ocr = temp_file_path
+
+            # 2. Execute PaddleOCR
+            logger.info(f"Running PaddleOCR on target input: {img_for_ocr}")
+            try:
+                raw_results = ocr.ocr(img_for_ocr)
+            except TypeError:
+                raw_results = ocr.ocr(img_for_ocr, cls=self.use_angle_cls)
+
+            logger.info(f"PaddleOCR raw output type: {type(raw_results)}, content count: {len(raw_results) if raw_results else 0}")
+
         except Exception as ocr_err:
-            logger.error(f"PaddleOCR execution error: {ocr_err}")
+            logger.error(f"PaddleOCR execution error: {ocr_err}", exc_info=True)
             return []
+        finally:
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.remove(temp_file_path)
+                except Exception:
+                    pass
 
         token_boxes: List[TokenBox] = []
-        if not raw_results or not raw_results[0]:
+        if not raw_results:
             return token_boxes
 
-        for line in raw_results[0]:
+        # Handle different output structures across PaddleOCR versions:
+        lines = []
+        if isinstance(raw_results, list) and len(raw_results) > 0:
+            if raw_results[0] is None:
+                return token_boxes
+            if isinstance(raw_results[0], list):
+                # Standard v2 nested: [ [ [quad, (text, conf)], ... ] ]
+                lines = raw_results[0]
+            elif isinstance(raw_results[0], tuple) or (len(raw_results[0]) == 2 and isinstance(raw_results[0][0], list)):
+                # Flat list: [ [quad, (text, conf)], ... ]
+                lines = raw_results
+            elif isinstance(raw_results[0], dict):
+                # PaddleX / v3 dict format: [{'dt_polys': [...], 'rec_text': [...], 'rec_score': [...]}]
+                d = raw_results[0]
+                polys = d.get("dt_polys", d.get("boxes", []))
+                texts = d.get("rec_text", d.get("texts", []))
+                scores = d.get("rec_score", d.get("scores", [1.0] * len(texts)))
+                for poly, text, score in zip(polys, texts, scores):
+                    if hasattr(poly, "tolist"):
+                        poly = poly.tolist()
+                    flat_poly = [int(round(coord)) for pt in poly for coord in pt] if isinstance(poly[0], (list, tuple)) else [int(round(c)) for c in poly]
+                    bbox = quad_to_bbox(flat_poly) if len(flat_poly) == 8 else flat_poly
+                    token_boxes.extend(split_line_into_words(str(text), bbox, float(score)))
+                token_boxes.sort(key=lambda tb: (tb.bbox[1] // 15, tb.bbox[0]))
+                return token_boxes
+
+        for line in lines:
             if not line or len(line) < 2:
                 continue
             try:
-                quad = [coord for pt in line[0] for coord in pt]
-                line_bbox = quad_to_bbox(quad)
-                text, conf = str(line[1][0]), float(line[1][1])
+                poly = line[0]
+                if isinstance(poly[0], (list, tuple)):
+                    quad = [int(round(coord)) for pt in poly for coord in pt]
+                else:
+                    quad = [int(round(c)) for c in poly]
 
-                # Split line into words for token-level precision
+                line_bbox = quad_to_bbox(quad) if len(quad) == 8 else quad
+                text_info = line[1]
+                if isinstance(text_info, (list, tuple)):
+                    text, conf = str(text_info[0]), float(text_info[1])
+                else:
+                    text, conf = str(text_info), 1.0
+
                 words = split_line_into_words(text, line_bbox, conf)
                 token_boxes.extend(words)
             except Exception as parse_line_err:
                 logger.warning(f"Skipping unparseable OCR line {line}: {parse_line_err}")
                 continue
 
-        # Sort reading order: top-to-bottom, left-to-right
         token_boxes.sort(key=lambda tb: (tb.bbox[1] // 15, tb.bbox[0]))
         return token_boxes
 
@@ -189,7 +246,24 @@ class SROIEPrecomputedOCREngine(BaseOCREngine):
         sample_txt = Path("data/samples/box/sample_001.txt")
         if sample_txt.exists():
             return self.extract_from_file(sample_txt)
-        return MockOCREngine().extract_tokens(image_input)
+        return [
+            TokenBox(text="BOOK", bbox=[55, 62, 120, 85], confidence=0.99),
+            TokenBox(text="XPRESS", bbox=[130, 62, 220, 85], confidence=0.99),
+            TokenBox(text="SDN", bbox=[230, 62, 280, 85], confidence=0.98),
+            TokenBox(text="BHD", bbox=[290, 62, 340, 85], confidence=0.98),
+            TokenBox(text="NO", bbox=[55, 100, 80, 118], confidence=0.96),
+            TokenBox(text="12", bbox=[85, 100, 110, 118], confidence=0.96),
+            TokenBox(text="JALAN", bbox=[115, 100, 180, 118], confidence=0.97),
+            TokenBox(text="SULTAN", bbox=[185, 100, 260, 118], confidence=0.97),
+            TokenBox(text="50000", bbox=[55, 125, 115, 142], confidence=0.96),
+            TokenBox(text="KUALA", bbox=[120, 125, 180, 142], confidence=0.96),
+            TokenBox(text="LUMPUR", bbox=[185, 125, 260, 142], confidence=0.96),
+            TokenBox(text="DATE:", bbox=[55, 180, 110, 198], confidence=0.98),
+            TokenBox(text="12/05/2018", bbox=[120, 180, 230, 198], confidence=0.99),
+            TokenBox(text="TOTAL", bbox=[55, 300, 120, 320], confidence=0.99),
+            TokenBox(text="RM", bbox=[130, 300, 160, 320], confidence=0.98),
+            TokenBox(text="45.00", bbox=[170, 300, 240, 320], confidence=0.99),
+        ]
 
 
 class MockOCREngine(BaseOCREngine):
