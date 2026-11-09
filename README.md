@@ -6,6 +6,10 @@
 [![Docker](https://img.shields.io/badge/Docker-Enabled-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 
+> 🚀 **Live Production API (Swagger Docs):** [http://32.236.126.177:8000/docs](http://32.236.126.177:8000/docs)  
+> 📊 **Live Telemetry & Drift Monitoring:** [http://32.236.126.177:8000/telemetry](http://32.236.126.177:8000/telemetry)  
+> 📈 **MLflow Tracking Dashboard:** [http://32.236.126.177:5000](http://32.236.126.177:5000)
+
 An end-to-end multimodal Document AI system for scanned invoice and receipt processing. Combines **PaddleOCR** for text localization/recognition with a fine-tuned **LayoutLMv3** (visual + spatial + textual token classification) to extract structured accounting data (`company`, `date`, `address`, `total`) into schema-validated JSON with confidence metrics and drift monitoring.
 
 ---
