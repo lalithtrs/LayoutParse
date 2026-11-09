@@ -85,7 +85,7 @@ class PaddleOCREngine(BaseOCREngine):
 
     def extract_tokens(self, image_input: Union[str, Path, Any]) -> List[TokenBox]:
         ocr = self._get_ocr()
-        
+
         # Prepare image for PaddleOCR: supports file path, PIL Image, BytesIO, or numpy array
         img_for_ocr = image_input
         try:

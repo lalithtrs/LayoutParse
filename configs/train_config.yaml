@@ -25,3 +25,6 @@ tracking:
   experiment_name: "layoutlmv3_sroie_kie"
   run_name: "layoutlmv3_base_sroie_run1"
   log_artifacts: true
+
+
+# scp -i ~/Downloads/layoutparse.pem models/best_layoutlmv3_sroie/model.safetensors ubuntu@32.236.126.177:~/
