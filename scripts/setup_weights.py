@@ -44,7 +44,9 @@ def setup_weights(source_path: str):
 
     logger.info(f"Extracting weights from: {source}")
 
-    if source.suffix == ".zip":
+    if source.resolve() == TARGET_DIR.resolve():
+        logger.info("Source directory is already the target directory. Skipping copy.")
+    elif source.suffix == ".zip":
         with zipfile.ZipFile(source, "r") as zf:
             # Check if contents are nested inside a top-level directory
             members = zf.namelist()

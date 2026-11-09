@@ -55,6 +55,9 @@ models/weights/
 *.pt
 *.onnx
 *.bin
+*.safetensors
+models/best_layoutlmv3_sroie/*.safetensors
+models/best_layoutlmv3_sroie/*.bin
 
 # Data
 data/raw/*
