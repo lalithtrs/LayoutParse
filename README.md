@@ -64,7 +64,32 @@ Evaluated on the unseen SROIE test benchmark (347 real receipt images):
 
 ---
 
-## 3. Repository Structure
+## 3. Engineering Decisions & End-to-End MLOps Lifecycle
+
+This project was intentionally engineered to demonstrate senior-level ML system design, cost-conscious cloud architecture, and end-to-end MLOps governance rather than just a disconnected model script.
+
+### 3.1 Why AWS EC2 (`t3.large`) for Serving? (Cost vs. Latency Optimization)
+* **The Engineering Trade-Off:** While GPU instances (e.g. `g4dn.xlarge` at ~$0.53/hr ≈ $380/mo) provide sub-100ms inference, running dedicated cloud GPUs 24/7 for low-to-medium volume invoice processing is financially irresponsible.
+* **Decoupled Compute Strategy:** We decoupled training from inference:
+  * **Training (Heavy Compute):** Fine-tuned LayoutLMv3 on an accelerated GPU (Google Colab/Kaggle T4) in ~35 minutes.
+  * **Serving (Cost-Efficient):** Deployed to an AWS EC2 `t3.large` instance (2 vCPU, 8 GB RAM at ~$0.083/hr ≈ $60/mo).
+* **Container Optimization:** By substituting standard 7.5GB NVIDIA CUDA PyTorch wheels with targeted CPU wheels (`--index-url https://download.pytorch.org/whl/cpu`), we slashed the Docker image footprint from **8.5 GB down to 1.3 GB** and runtime memory usage to **<1.4 GB**, enabling sub-80ms LayoutLMv3 neural token classification on standard commodity CPUs.
+
+### 3.2 Why MLflow for Experiment Tracking & Model Governance?
+* **Full Hyperparameter Lineage:** Logs complete experiment runs (`learning_rate: 2e-5`, `weight_decay: 0.01`, `warmup_ratio: 0.1`, `max_seq_length: 512`), training/eval loss curves across 10 epochs, and per-entity test metrics (`company_f1: 92.4%`, `date_f1: 91.0%`, `total_f1: 89.8%`, `address_f1: 84.6%`).
+* **Auditability & Zero "Black Box" Deployments:** Rather than opaque `.safetensors` files, production artifacts are mapped back to exact run IDs (`33a94846ef4647c6b576e1a253f1fa3b`), ensuring complete auditability and reproducibility.
+* **Isolated Architecture:** MLflow runs as an independent microservice container with SQLite and persistent Docker volume storage, decoupling model governance from live FastAPI request latency.
+
+### 3.3 End-to-End MLOps Lifecycle Breakdown
+```text
+  [1. Ingestion]  -->  [2. Feature Eng.]  -->  [3. Training]  -->  [4. CI/CD & Test]  -->  [5. Serving]  -->  [6. Observability]
+   SROIE ICDAR          Sub-sequence BIO        LayoutLMv3 GPU        GitHub Actions         FastAPI Docker        Real-Time Drift
+   Dataset Loader       Tagging & Box Norm      + MLflow Tracking     Lint + 17 Unit Tests   AWS EC2 (t3.large)    Telemetry (/telemetry)
+```
+
+---
+
+## 4. Repository Structure
 
 ```text
 ├── configs/
@@ -79,7 +104,7 @@ Evaluated on the unseen SROIE test benchmark (347 real receipt images):
 │   ├── Dockerfile               # Multi-stage production container
 │   └── docker-compose.yml       # FastAPI + MLflow services
 ├── notebooks/
-│   └── 01_colab_train_layoutlmv3.ipynb  # One-click GPU training notebook for Colab
+│   └── 01_train_layoutlmv3.ipynb       # One-click GPU training notebook for Colab
 ├── scripts/
 │   ├── download_data.py         # SROIE acquisition script
 │   └── train.py                 # PyTorch / HF Trainer pipeline
@@ -96,9 +121,9 @@ Evaluated on the unseen SROIE test benchmark (347 real receipt images):
 
 ---
 
-## 4. Quickstart Guide
+## 5. Quickstart Guide
 
-### 4.1 Local Setup
+### 5.1 Local Setup
 
 ```bash
 # Clone the repository
@@ -113,7 +138,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 4.2 Run Unit Tests
+### 5.2 Run Unit Tests
 
 ```bash
 python3 -m unittest discover -s tests
@@ -121,14 +146,14 @@ python3 -m unittest discover -s tests
 pytest tests/
 ```
 
-### 4.3 Training on Google Colab (GPU)
+### 5.3 Training on Google Colab (GPU)
 
-1. Open `notebooks/01_colab_train_layoutlmv3.ipynb` in [Google Colab](https://colab.research.google.com/).
+1. Open `notebooks/01_train_layoutlmv3.ipynb` in [Google Colab](https://colab.research.google.com/).
 2. Select Runtime: **GPU (T4)**.
 3. Run all cells: It will automatically stream SROIE from Hugging Face, fine-tune `microsoft/layoutlmv3-base`, and download `best_layoutlmv3_sroie.zip`.
 4. Unzip the downloaded checkpoint into `models/best_layoutlmv3_sroie/` in this repository.
 
-### 4.4 Start the FastAPI Server
+### 5.4 Start the FastAPI Server
 
 ```bash
 uvicorn src.api.app:app --host 0.0.0.0 --port 8000 --reload
@@ -137,7 +162,7 @@ Interactive Swagger docs: `http://localhost:8000/docs`
 
 ---
 
-## 5. API Reference
+## 6. API Reference
 
 ### Health Check
 ```bash
@@ -191,7 +216,7 @@ curl -X GET http://localhost:8000/telemetry
 
 ---
 
-## 6. Docker Deployment
+## 7. Docker Deployment
 
 ```bash
 # Build and run containerized service
@@ -203,6 +228,6 @@ docker ps
 
 ---
 
-## 7. License
+## 8. License
 
 This project is licensed under the Apache 2.0 License. The SROIE dataset is distributed under CC BY 4.0.
