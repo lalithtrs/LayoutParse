@@ -113,20 +113,32 @@ class PaddleOCREngine(BaseOCREngine):
             img_for_ocr = image_input
 
         # PaddleOCR returns: [ [ [ [x,y] * 4 ], (text, confidence) ], ... ]
-        raw_results = ocr.ocr(img_for_ocr, cls=self.use_angle_cls)
+        try:
+            raw_results = ocr.ocr(img_for_ocr)
+        except TypeError:
+            raw_results = ocr.ocr(img_for_ocr, cls=self.use_angle_cls)
+        except Exception as ocr_err:
+            logger.error(f"PaddleOCR execution error: {ocr_err}")
+            return []
 
         token_boxes: List[TokenBox] = []
         if not raw_results or not raw_results[0]:
             return token_boxes
 
         for line in raw_results[0]:
-            quad = [coord for pt in line[0] for coord in pt]
-            line_bbox = quad_to_bbox(quad)
-            text, conf = line[1][0], float(line[1][1])
+            if not line or len(line) < 2:
+                continue
+            try:
+                quad = [coord for pt in line[0] for coord in pt]
+                line_bbox = quad_to_bbox(quad)
+                text, conf = str(line[1][0]), float(line[1][1])
 
-            # Split line into words for token-level precision
-            words = split_line_into_words(text, line_bbox, conf)
-            token_boxes.extend(words)
+                # Split line into words for token-level precision
+                words = split_line_into_words(text, line_bbox, conf)
+                token_boxes.extend(words)
+            except Exception as parse_line_err:
+                logger.warning(f"Skipping unparseable OCR line {line}: {parse_line_err}")
+                continue
 
         # Sort reading order: top-to-bottom, left-to-right
         token_boxes.sort(key=lambda tb: (tb.bbox[1] // 15, tb.bbox[0]))
