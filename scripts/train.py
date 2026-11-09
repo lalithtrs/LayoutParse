@@ -1,129 +1,160 @@
-"""Fine-tune LayoutLMv3 for Token Classification on SROIE Dataset.
+"""Fine-tune LayoutLMv3 for token classification (KIE) on the real SROIE dataset.
 
-Supports execution in Google Colab (GPU) or local/cloud environments with MLflow logging.
+Learns all four fields (COMPANY, DATE, ADDRESS, TOTAL) using word-level tokens and
+the robust BIO tagger, then saves the model AND processor so the inference pipeline
+loads cleanly.
 
-Usage:
+Usage (Colab GPU or local):
     python scripts/train.py --config configs/train_config.yaml
+    python scripts/train.py --config configs/train_config.yaml --max-train 40 --epochs 1   # smoke test
 """
 
 import argparse
 import logging
-import os
+import sys
 from pathlib import Path
-from typing import Dict, List
 
 import yaml
-from src.data.bio_tagger import DEFAULT_LABELS, ID2LABEL, LABEL2ID
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.data.bio_tagger import DEFAULT_LABELS, ID2LABEL, LABEL2ID  # noqa: E402
+from src.data.prepare import build_prepare_fn  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("train")
 
 
-def compute_metrics(p, label_list: List[str]):
-    """Compute entity-level precision, recall, and F1 via seqeval."""
+def build_compute_metrics(label_list):
     import evaluate
     import numpy as np
 
     seqeval = evaluate.load("seqeval")
-    predictions, labels = p
-    predictions = np.argmax(predictions, axis=2)
 
-    true_predictions = [
-        [label_list[p_idx] for (p_idx, l_idx) in zip(prediction, label) if l_idx != -100]
-        for prediction, label in zip(predictions, labels)
-    ]
-    true_labels = [
-        [label_list[l_idx] for (p_idx, l_idx) in zip(prediction, label) if l_idx != -100]
-        for prediction, label in zip(predictions, labels)
-    ]
+    def compute_metrics(p):
+        predictions, labels = p
+        predictions = np.argmax(predictions, axis=2)
+        true_predictions = [
+            [label_list[pi] for (pi, li) in zip(pred, lab) if li != -100]
+            for pred, lab in zip(predictions, labels)
+        ]
+        true_labels = [
+            [label_list[li] for (pi, li) in zip(pred, lab) if li != -100]
+            for pred, lab in zip(predictions, labels)
+        ]
+        results = seqeval.compute(predictions=true_predictions, references=true_labels)
+        flat = {
+            "precision": results["overall_precision"],
+            "recall": results["overall_recall"],
+            "overall_f1": results["overall_f1"],
+            "accuracy": results["overall_accuracy"],
+        }
+        for entity in ("COMPANY", "DATE", "ADDRESS", "TOTAL"):
+            if entity in results:
+                flat[f"{entity.lower()}_f1"] = results[entity]["f1"]
+        return flat
 
-    results = seqeval.compute(predictions=true_predictions, references=true_labels)
-    return {
-        "precision": results["overall_precision"],
-        "recall": results["overall_recall"],
-        "overall_f1": results["overall_f1"],
-        "accuracy": results["overall_accuracy"],
-    }
+    return compute_metrics
 
 
-def train(config_path: str):
-    """Execute LayoutLMv3 fine-tuning."""
-    with open(config_path, "r", encoding="utf-8") as f:
+def main():
+    parser = argparse.ArgumentParser(description="Train LayoutLMv3 on SROIE")
+    parser.add_argument("--config", default="configs/train_config.yaml")
+    parser.add_argument("--hf-name", default="jsdnrs/ICDAR2019-SROIE")
+    parser.add_argument("--output-dir", default="models/best_layoutlmv3_sroie")
+    parser.add_argument("--epochs", type=int, default=None, help="Override num_train_epochs")
+    parser.add_argument("--max-train", type=int, default=None, help="Cap train docs (smoke test)")
+    args = parser.parse_args()
+
+    with open(args.config, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
-
     model_name = config["model"]["pretrained_model_name"]
-    train_args = config["training"]
-    tracking_args = config["tracking"]
+    t = config["training"]
 
-    logger.info(f"Loading pretrained model and processor: {model_name}")
-
-    try:
-        import torch
-        from datasets import load_dataset
-        from transformers import (
-            AutoProcessor,
-            LayoutLMv3ForTokenClassification,
-            Trainer,
-            TrainingArguments,
-        )
-    except ImportError as e:
-        logger.error(
-            "Required deep learning libraries not found. Ensure torch, transformers, datasets are installed."
-        )
-        raise e
+    import torch
+    from datasets import load_dataset
+    from transformers import (
+        AutoProcessor,
+        LayoutLMv3ForTokenClassification,
+        Trainer,
+        TrainingArguments,
+        default_data_collator,
+    )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    logger.info(f"Using compute device: {device}")
+    logger.info(f"Device: {device}")
 
     processor = AutoProcessor.from_pretrained(model_name, apply_ocr=False)
-
     model = LayoutLMv3ForTokenClassification.from_pretrained(
         model_name,
         num_labels=len(DEFAULT_LABELS),
         id2label=ID2LABEL,
         label2id=LABEL2ID,
     )
-    model.to(device)
 
-    # MLflow tracking initialization
-    if tracking_args.get("tracker") == "mlflow":
-        try:
-            import mlflow
+    logger.info(f"Loading dataset {args.hf_name} ...")
+    ds = load_dataset(args.hf_name)
+    if args.max_train:
+        ds["train"] = ds["train"].select(range(min(args.max_train, len(ds["train"]))))
 
-            mlflow.set_experiment(tracking_args.get("experiment_name", "layoutlmv3_sroie"))
-            logger.info("MLflow tracking initialized.")
-        except ImportError:
-            logger.warning("MLflow not installed. Continuing without MLflow logging.")
+    prepare = build_prepare_fn(processor, max_length=config["dataset"].get("max_seq_length", 512)
+                               if "dataset" in config else 512)
+    logger.info("Tokenizing (word-level BIO) ...")
+    encoded = ds.map(prepare, batched=True, batch_size=2, remove_columns=ds["train"].column_names)
+    encoded.set_format("torch")
 
-    output_dir = "checkpoints/layoutlmv3_sroie"
-    os.makedirs(output_dir, exist_ok=True)
+    # transformers renamed evaluation_strategy -> eval_strategy; support both.
+    import inspect
 
-    hf_training_args = TrainingArguments(
-        output_dir=output_dir,
-        learning_rate=float(train_args["learning_rate"]),
-        per_device_train_batch_size=train_args["per_device_train_batch_size"],
-        per_device_eval_batch_size=train_args["per_device_eval_batch_size"],
-        gradient_accumulation_steps=train_args["gradient_accumulation_steps"],
-        num_train_epochs=train_args["num_train_epochs"],
-        weight_decay=train_args["weight_decay"],
-        warmup_ratio=train_args["warmup_ratio"],
-        fp16=train_args["fp16"] if torch.cuda.is_available() else False,
-        eval_strategy=train_args["eval_strategy"],
-        save_strategy=train_args["save_strategy"],
-        save_total_limit=train_args["save_total_limit"],
-        load_best_model_at_end=train_args["load_best_model_at_end"],
-        metric_for_best_model=train_args["metric_for_best_model"],
-        greater_is_better=train_args["greater_is_better"],
-        logging_steps=train_args["logging_steps"],
-        report_to=["mlflow"] if tracking_args.get("tracker") == "mlflow" else [],
+    eval_key = (
+        "eval_strategy"
+        if "eval_strategy" in inspect.signature(TrainingArguments.__init__).parameters
+        else "evaluation_strategy"
     )
+    ta_kwargs = dict(
+        output_dir="checkpoints/layoutlmv3_sroie",
+        learning_rate=float(t["learning_rate"]),
+        per_device_train_batch_size=t["per_device_train_batch_size"],
+        per_device_eval_batch_size=t["per_device_eval_batch_size"],
+        gradient_accumulation_steps=t.get("gradient_accumulation_steps", 1),
+        num_train_epochs=args.epochs if args.epochs is not None else t["num_train_epochs"],
+        weight_decay=t.get("weight_decay", 0.01),
+        warmup_ratio=t.get("warmup_ratio", 0.1),
+        fp16=bool(t.get("fp16", True)) and torch.cuda.is_available(),
+        save_strategy=t.get("save_strategy", "epoch"),
+        save_total_limit=t.get("save_total_limit", 1),
+        load_best_model_at_end=t.get("load_best_model_at_end", True),
+        metric_for_best_model=t.get("metric_for_best_model", "overall_f1"),
+        greater_is_better=t.get("greater_is_better", True),
+        logging_steps=t.get("logging_steps", 25),
+        report_to=[],
+    )
+    ta_kwargs[eval_key] = t.get("eval_strategy", "epoch")
+    targs = TrainingArguments(**ta_kwargs)
 
-    logger.info("Training configuration complete. Ready to attach dataset and run Trainer.train().")
-    return model, processor, hf_training_args
+    trainer_kwargs = dict(
+        model=model,
+        args=targs,
+        train_dataset=encoded["train"],
+        eval_dataset=encoded["test"],
+        data_collator=default_data_collator,
+        compute_metrics=build_compute_metrics(DEFAULT_LABELS),
+    )
+    if "processing_class" in Trainer.__init__.__code__.co_varnames:
+        trainer_kwargs["processing_class"] = processor
+    else:
+        trainer_kwargs["tokenizer"] = processor
+    trainer = Trainer(**trainer_kwargs)
+
+    trainer.train()
+    logger.info(f"Final metrics: {trainer.evaluate()}")
+
+    out = Path(args.output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    trainer.save_model(str(out))
+    processor.save_pretrained(str(out))
+    logger.info(f"Saved model + processor to {out}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train LayoutLMv3 on SROIE")
-    parser.add_argument("--config", default="configs/train_config.yaml", help="Path to YAML training config")
-    args = parser.parse_args()
-    train(args.config)
+    main()

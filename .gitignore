@@ -64,7 +64,13 @@ data/raw/*
 !data/raw/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
+# Full 361-image test benchmark is regenerated locally via scripts/download_data.py
+data/test/*
+!data/test/.gitkeep
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Generated evaluation artifact (produced by scripts/evaluate.py)
+evaluation_report.json
