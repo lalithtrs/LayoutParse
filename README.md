@@ -1,4 +1,4 @@
-# DocuExtract — Document AI Invoice & Receipt Key Information Extraction
+# LayoutParse — Document AI Invoice & Receipt Key Information Extraction
 
 [![CI](https://github.com/lalithtrs/LayoutParse/actions/workflows/ci.yml/badge.svg)](https://github.com/lalithtrs/LayoutParse/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -16,7 +16,7 @@ behind a FastAPI API with Docker, CI/CD, and drift monitoring.
 
 ## 🎥 Demo
 
-![DocuExtract demo](docs/demo.gif)
+![LayoutParse demo](docs/demo.gif)
 
 *Uploading a receipt to the `/extract` endpoint and getting structured key fields back with
 per-field confidence scores.*
